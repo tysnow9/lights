@@ -94,6 +94,8 @@ void setup()
 
   // Initialize LED variables, and setup LEDs (uses pin D4)
   FastLED.addLeds<LED_TYPE,LED_PIN,COLOR_ORDER>(leds, NUM_LEDS).setCorrection(TypicalLEDStrip);
+//  FastLED.addLeds<LED_TYPE,LED_PIN,COLOR_ORDER>(leds, NUM_LEDS).setCorrection(Typical8mmPixel);
+//  FastLED.addLeds<LED_TYPE,LED_PIN,COLOR_ORDER>(leds, NUM_LEDS).setCorrection(UncorrectedColor);
   FastLED.setBrightness(level); // Set master brightness control
 
   // Fire color palette
@@ -106,7 +108,7 @@ void setup()
 // List of light patterns.  Each is defined as a separate function below.
 typedef void (*SimplePatternList[])();
 SimplePatternList gPatterns = { manual, touchDesigner, rainbow, rainbowWithGlitter, 
-                                confetti, sinelon, juggle, bpm, fire };
+                                confetti, sinelon, juggle, bpm, fire, beat };
 int gCurrentPatternNumber = 0; // Index number of which pattern is current
 uint8_t gHue = 0; // rotating "base color" used by many of the patterns
 
@@ -120,7 +122,7 @@ void loop() {
   delay(1);
 
   // Receive OSC data
-  //  // TODO - "oscRead();" here?
+  // TODO - "oscRead();" here?
   OSCMessage msg;
   int size = Udp.parsePacket();
   if (size > 0) {
@@ -183,23 +185,43 @@ void colorLightChanged(uint8_t brightness, uint32_t rgb) {
   Serial.print((rgb >>  8) & 0xFF); //get green
   Serial.print(", Blue: ");
   Serial.print(rgb & 0xFF); //get blue
-  
-  // Handle Patterns/Modes (brightness = 1-9)
-  int percentLevel = espalexa.toPercent(brightness); // Convert range 0-255 to 0-100
-  if ( (percentLevel > 0) && (percentLevel < 10) )
+
+  // Capture updates
+  level = brightness;
+  red = (rgb >> 16) & 0xFF;
+  green = (rgb >> 8) & 0xFF;
+  blue = rgb & 0xFF;
+
+  // Handle special case - setting "White" with Alexa, causes all zeroes
+  if ((red == 0) && (green == 0) && (blue == 0))
   {
-    gCurrentPatternNumber = percentLevel - 1; // 0 for manual controls
+    if (level == 0)
+      level = 70;
+    red = 255;
+    green = 255;
+    blue = 255;
   }
+
+  // Handle "mode" changes
+  if ((red != pRed) || (green != pGreen) || (blue != pBlue))
+    gCurrentPatternNumber = 0;  // Switch to "manual"
+  // Patterns/Modes (level = 1-9, etc)
   else
   {
-    level = brightness;
-    red = (rgb >> 16) & 0xFF;
-    green = (rgb >> 8) & 0xFF;
-    blue = rgb & 0xFF;
+    int percentLevel = espalexa.toPercent(level); // Convert range 0-255 to 0-100
+    if ((percentLevel > 0) && (percentLevel < 11))
+      gCurrentPatternNumber = percentLevel - 1; // 0 for "manual" controls
   }
+  
+  // Save values
+  pLevel = level;
+  pRed = red;
+  pGreen = green;
+  pBlue = blue;
 
   Serial.print(", Mode: ");
   Serial.println(gCurrentPatternNumber);
+//  Serial.println(sizeof(gPatterns));
 }
 
 // ---------------------------------------
@@ -277,6 +299,7 @@ void ledPattern(OSCMessage &msg)
 void ledRate(OSCMessage &msg)
 {
   rate = (int)(254*msg.getFloat(0)) + 1;
+//  Serial.println(rate);
 }
 
 // ---------------------------------------
@@ -303,7 +326,7 @@ void rainbowWithGlitter()
 {
   // built-in FastLED rainbow, plus some random sparkly glitter
   rainbow();
-  addGlitter(80);
+  addGlitter(100);
 }
 
 void addGlitter( fract8 chanceOfGlitter) 
@@ -385,6 +408,29 @@ void fire()
       }
       leds[pixelnumber] = color;
     }
+}
+
+void beat()
+{ 
+  fadeToBlackBy( leds, NUM_LEDS, 10);
+  EVERY_N_MILLISECONDS(900 - int(900 * float((rate / 255.0)))) {
+    int pos = random(NUM_LEDS);
+    int dist = 0;
+    int width = 20;
+    leds[pos] += CHSV( gHue + random8(64), 200, 255);
+    for( int i = 0; i < NUM_LEDS; i++) {
+      if (i <= pos)
+        dist = pos - i;
+      else
+        dist = i - pos;
+      if (dist < width)
+      {
+        leds[i].r = int(leds[pos].r * float(1 - (dist / float(width))));
+        leds[i].g = int(leds[pos].g * float(1 - (dist / float(width))));
+        leds[i].b = int(leds[pos].b * float(1 - (dist / float(width))));
+      }
+    }
+  }
 }
 
 // ---------------------------------------
